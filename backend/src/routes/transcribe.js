@@ -5,12 +5,11 @@ import path from 'path';
 import fs from 'fs';
 import { requirePassword } from '../middleware/auth.js';
 import { transcribeAudio } from '../services/gemini.js';
-import { driveEnabled, uploadToDrive } from '../services/googleDrive.js';
+import { driveEnabled, uploadAudioToDrive, uploadTranscriptToDrive } from '../services/googleDrive.js';
 
 const router = express.Router();
 
 // ── In-memory job store ────────────────────────────────────────────────────
-// { jobId → { status: 'processing'|'done'|'error', message, transcript, filename, drive, error } }
 const jobs = new Map();
 
 // Clean up jobs older than 30 minutes
@@ -35,7 +34,6 @@ const upload = multer({
 });
 
 // ── POST /api/transcribe ───────────────────────────────────────────────────
-// Returns immediately with a jobId; processing happens in background.
 router.post('/', requirePassword, upload.single('audio'), (req, res) => {
   const file = req.file;
   if (!file) {
@@ -47,13 +45,8 @@ router.post('/', requirePassword, upload.single('audio'), (req, res) => {
   const mimeMap = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.mp4': 'audio/mp4' };
   const mimeType = mimeMap[ext] || file.mimetype || 'audio/mpeg';
 
-  jobs.set(jobId, {
-    status: 'processing',
-    message: 'Subiendo audio a Gemini...',
-    createdAt: Date.now(),
-  });
+  jobs.set(jobId, { status: 'processing', message: 'Iniciando...', createdAt: Date.now() });
 
-  // Start processing in background (no await — returns to client immediately)
   processJob(jobId, file, mimeType).catch(() => {});
 
   res.json({ jobId });
@@ -69,28 +62,49 @@ router.get('/status/:jobId', requirePassword, (req, res) => {
 // ── Background processing ──────────────────────────────────────────────────
 async function processJob(jobId, file, mimeType) {
   const update = (fields) => jobs.set(jobId, { ...jobs.get(jobId), ...fields });
+  const drive = { audio: null, transcript: null, error: null };
 
   try {
-    update({ message: 'Transcribiendo...' });
-    const transcript = await transcribeAudio(file.path, mimeType);
-
-    let drive = null;
+    // 1. Upload audio to Drive FIRST (verifiable before AI starts)
     if (driveEnabled()) {
-      update({ message: 'Guardando en Drive...' });
+      update({ message: 'Guardando audio en Drive...' });
       try {
-        drive = await uploadToDrive({
+        drive.audio = await uploadAudioToDrive({
           audioPath: file.path,
           audioName: file.originalname,
-          transcriptText: transcript,
           mimeType,
         });
-      } catch (driveErr) {
-        console.error('[Drive] Upload failed (non-fatal):', driveErr.message);
-        drive = { error: driveErr.message };
+      } catch (err) {
+        console.error('[Drive] Audio upload failed (non-fatal):', err.message);
+        drive.error = err.message;
       }
     }
 
-    update({ status: 'done', transcript, filename: file.originalname, drive, message: 'Listo.' });
+    // 2. Transcribe with AI
+    update({ message: 'Procesando con IA...' });
+    const transcript = await transcribeAudio(file.path, mimeType);
+
+    // 3. Upload transcript .txt to Drive
+    if (driveEnabled()) {
+      update({ message: 'Guardando transcripción en Drive...' });
+      try {
+        drive.transcript = await uploadTranscriptToDrive({
+          transcriptText: transcript,
+          audioName: file.originalname,
+        });
+      } catch (err) {
+        console.error('[Drive] Transcript upload failed (non-fatal):', err.message);
+        drive.error = (drive.error ? drive.error + ' | ' : '') + err.message;
+      }
+    }
+
+    update({
+      status: 'done',
+      transcript,
+      filename: file.originalname,
+      drive: driveEnabled() ? drive : null,
+      message: 'Listo.',
+    });
   } catch (err) {
     console.error(`[Job ${jobId}] Error:`, err.message);
     update({ status: 'error', error: err.message || 'Error al transcribir el audio.' });
