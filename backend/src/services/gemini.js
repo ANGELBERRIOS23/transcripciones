@@ -1,7 +1,19 @@
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+// Build ordered list of models to try: GEMINI_MODEL → GEMINI_MODEL_2 → GEMINI_MODEL_3 → default
+const MODELS = [
+  process.env.GEMINI_MODEL,
+  process.env.GEMINI_MODEL_2,
+  process.env.GEMINI_MODEL_3,
+]
+  .filter(Boolean)
+  .concat(['gemini-2.0-flash']); // always available as last resort
+
+// Deduplicate while preserving order
+const MODEL_LIST = [...new Set(MODELS)];
+
+console.log(`[AI] Modelos configurados: ${MODEL_LIST.join(' → ')}`);
 
 const PROMPT = `Eres un transcriptor legal profesional. Tu tarea es transcribir con total fidelidad la audiencia de derecho grabada en este audio.
 
@@ -17,10 +29,23 @@ REGLAS ESTRICTAS:
 7. Separa cada turno de habla con una línea en blanco.
 8. Produce únicamente la transcripción, sin resumen ni explicaciones.`;
 
+/** Returns true if the error is a retryable capacity/availability issue */
+function isRetryable(err) {
+  const msg = err?.message || '';
+  return (
+    msg.includes('503') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED')
+  );
+}
+
 /**
- * Transcribes an audio file using Gemini File API.
+ * Transcribes an audio file, trying each model in MODEL_LIST on capacity errors.
  * @param {string} filePath - Absolute path to the temp audio file.
- * @param {string} mimeType - MIME type of the audio (e.g. 'audio/mpeg').
+ * @param {string} mimeType - MIME type of the audio.
  * @returns {Promise<string>} Transcript text.
  */
 export async function transcribeAudio(filePath, mimeType = 'audio/mpeg') {
@@ -29,8 +54,8 @@ export async function transcribeAudio(filePath, mimeType = 'audio/mpeg') {
 
   const ai = new GoogleGenAI({ apiKey });
 
-  // Upload file to Gemini Files API
-  console.log(`[Gemini] Subiendo archivo: ${filePath}`);
+  // Upload file once — reuse across model attempts
+  console.log(`[AI] Subiendo archivo: ${filePath}`);
   const fileBuffer = fs.readFileSync(filePath);
   const blob = new Blob([fileBuffer], { type: mimeType });
 
@@ -39,43 +64,50 @@ export async function transcribeAudio(filePath, mimeType = 'audio/mpeg') {
     config: { mimeType, displayName: filePath.split('/').pop() },
   });
 
-  // Wait for the file to become ACTIVE
-  console.log(`[Gemini] Esperando que el archivo quede activo...`);
+  // Wait for ACTIVE state
+  console.log(`[AI] Esperando que el archivo quede activo...`);
   let fileStatus = await ai.files.get({ name: uploadedFile.name });
   while (fileStatus.state === 'PROCESSING') {
     await new Promise((r) => setTimeout(r, 3000));
     fileStatus = await ai.files.get({ name: uploadedFile.name });
-    console.log(`[Gemini] Estado: ${fileStatus.state}`);
   }
 
   if (fileStatus.state === 'FAILED') {
-    throw new Error(`El archivo falló en Gemini: ${uploadedFile.name}`);
+    throw new Error(`El archivo falló al procesarse: ${uploadedFile.name}`);
   }
 
-  console.log(`[Gemini] Archivo activo. Enviando a ${MODEL} para transcripción...`);
-
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: [
-      {
-        parts: [
-          { fileData: { fileUri: fileStatus.uri, mimeType } },
-          { text: PROMPT },
+  let lastError;
+  for (const model of MODEL_LIST) {
+    console.log(`[AI] Intentando con modelo: ${model}`);
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            parts: [
+              { fileData: { fileUri: fileStatus.uri, mimeType } },
+              { text: PROMPT },
+            ],
+          },
         ],
-      },
-    ],
-    config: {
-      temperature: 0.0,
-      maxOutputTokens: 65536,
-    },
-  });
+        config: { temperature: 0.0, maxOutputTokens: 65536 },
+      });
 
-  // Clean up the uploaded file from Gemini
-  try {
-    await ai.files.delete({ name: uploadedFile.name });
-  } catch {
-    // Non-critical
+      // Success — clean up and return
+      try { await ai.files.delete({ name: uploadedFile.name }); } catch { /* non-critical */ }
+      console.log(`[AI] ✅ Transcripción completada con: ${model}`);
+      return response.text?.trim() ?? '';
+    } catch (err) {
+      lastError = err;
+      if (isRetryable(err) && MODEL_LIST.indexOf(model) < MODEL_LIST.length - 1) {
+        console.warn(`[AI] Modelo ${model} no disponible, probando siguiente...`);
+        continue;
+      }
+      break; // non-retryable error or last model — stop
+    }
   }
 
-  return response.text?.trim() ?? '';
+  // All models failed — clean up and throw
+  try { await ai.files.delete({ name: uploadedFile.name }); } catch { /* non-critical */ }
+  throw lastError;
 }
