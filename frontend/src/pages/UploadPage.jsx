@@ -9,7 +9,7 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function UploadPage({ password, onTranscript, onLogout }) {
+export default function UploadPage({ password, onTranscript, onLogout, showRestore, savedFilename, onRestore, onDismissRestore }) {
   const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -114,6 +114,30 @@ export default function UploadPage({ password, onTranscript, onLogout }) {
       {/* Main */}
       <main className="flex-1 flex flex-col items-center py-10 px-6">
         <div className="w-full max-w-4xl flex flex-col gap-8">
+
+          {/* Restore banner */}
+          {showRestore && (
+            <div className="flex items-center gap-4 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800">
+              <span className="material-symbols-outlined shrink-0" style={{ fontSize: 22 }}>history</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold">Tienes una transcripción guardada</p>
+                <p className="text-xs text-amber-600 truncate">{savedFilename || 'Audiencia Legal'}</p>
+              </div>
+              <button
+                onClick={onRestore}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shrink-0"
+              >
+                Restaurar
+              </button>
+              <button
+                onClick={onDismissRestore}
+                className="p-1 rounded-lg hover:bg-amber-100 text-amber-500 transition-colors shrink-0"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              </button>
+            </div>
+          )}
+
           {/* Title */}
           <div>
             <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900">

@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { requirePassword } from '../middleware/auth.js';
 import { transcribeAudio } from '../services/gemini.js';
+import { driveEnabled, uploadToDrive } from '../services/googleDrive.js';
 
 const router = express.Router();
 
@@ -32,14 +33,33 @@ router.post('/', requirePassword, upload.single('audio'), async (req, res) => {
   const mimeMap = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.mp4': 'audio/mp4' };
   const mimeType = mimeMap[ext] || file.mimetype || 'audio/mpeg';
 
+  let transcript = null;
+  let drive = null;
+
   try {
-    const transcript = await transcribeAudio(file.path, mimeType);
-    res.json({ transcript, filename: file.originalname });
+    transcript = await transcribeAudio(file.path, mimeType);
+
+    // Optionally upload to Google Drive (audio + transcript)
+    if (driveEnabled()) {
+      try {
+        drive = await uploadToDrive({
+          audioPath: file.path,
+          audioName: file.originalname,
+          transcriptText: transcript,
+          mimeType,
+        });
+      } catch (driveErr) {
+        console.error('[Drive] Upload failed (non-fatal):', driveErr.message);
+        drive = { error: driveErr.message };
+      }
+    }
+
+    res.json({ transcript, filename: file.originalname, drive });
   } catch (err) {
     console.error('[/api/transcribe] Error:', err.message);
     res.status(500).json({ error: err.message || 'Error al transcribir el audio.' });
   } finally {
-    // Clean up temp file
+    // Clean up temp file after everything (including Drive upload) is done
     try { fs.unlinkSync(file.path); } catch { /* ignore */ }
   }
 });

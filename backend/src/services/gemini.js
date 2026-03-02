@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-pro-preview-06-05';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
 const PROMPT = `Eres un transcriptor legal profesional. Tu tarea es transcribir con total fidelidad la audiencia de derecho grabada en este audio.
 
