@@ -17,7 +17,8 @@ app.use('/api/transcribe', transcribeRouter);
 app.use('/api/download', downloadRouter);
 
 // Serve React frontend (built files)
-const publicDir = path.join(__dirname, '../../public');
+// __dirname = /app/src  →  ../public = /app/public
+const publicDir = path.join(__dirname, '../public');
 app.use(express.static(publicDir));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
