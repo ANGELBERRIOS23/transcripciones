@@ -26,7 +26,6 @@ function parseTranscript(text) {
     });
 }
 
-/** Convert a base64 string to a Blob URL */
 function b64ToBlob(b64) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -34,7 +33,6 @@ function b64ToBlob(b64) {
   return new Blob([bytes], { type: DOCX_MIME });
 }
 
-/** Read a Blob as base64 string (data: prefix stripped) */
 function blobToB64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -44,18 +42,29 @@ function blobToB64(blob) {
   });
 }
 
+function formatTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
 export default function TranscriptPage({ transcript, filename, audioFile, password, onBack, onLogout, onClearCache }) {
   const [search, setSearch] = useState('');
   const [downloading, setDownloading] = useState(false);
-  // Cached DOCX blob URL (in-memory, restored from localStorage on mount)
   const [docxUrl, setDocxUrl] = useState(null);
   const [docxCached, setDocxCached] = useState(false);
-  const blobUrlRef = useRef(null); // to revoke on unmount
-  // Audio player
+  const blobUrlRef = useRef(null);
+
+  // Audio player state
   const [audioUrl, setAudioUrl] = useState(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const audioRef = useRef(null);
   const audioUrlRef = useRef(null);
 
-  // On mount: restore DOCX from localStorage if available
+  // Restore DOCX from localStorage on mount
   useEffect(() => {
     const b64 = localStorage.getItem(LS_DOCX_B64);
     if (b64) {
@@ -69,7 +78,6 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
         localStorage.removeItem(LS_DOCX_B64);
       }
     }
-    // Cleanup blob URL on unmount
     return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
   }, []);
 
@@ -82,19 +90,26 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
     return () => { URL.revokeObjectURL(url); audioUrlRef.current = null; };
   }, [audioFile]);
 
+  // Audio controls
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) { audio.pause(); setPlaying(false); }
+    else { audio.play(); setPlaying(true); }
+  };
+  const handleSeek = (e) => {
+    const t = parseFloat(e.target.value);
+    setCurrentTime(t);
+    if (audioRef.current) audioRef.current.currentTime = t;
+  };
+
   const handleDownloadDocx = async () => {
     const safeFilename = `transcripcion_${(filename || 'audiencia').replace(/\.[^.]+$/, '')}.docx`;
-
-    // Use cached DOCX if available
     if (docxUrl) {
       const a = document.createElement('a');
-      a.href = docxUrl;
-      a.download = safeFilename;
-      a.click();
+      a.href = docxUrl; a.download = safeFilename; a.click();
       return;
     }
-
-    // Generate for the first time
     setDownloading(true);
     try {
       const res = await fetch('/api/download/docx', {
@@ -103,28 +118,18 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
         body: JSON.stringify({ transcript, title: `Transcripción — ${filename || 'Audiencia Legal'}` }),
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
-
       const blob = await res.blob();
-
-      // Cache in localStorage as base64
       try {
         const b64 = await blobToB64(blob);
         localStorage.setItem(LS_DOCX_B64, b64);
         setDocxCached(true);
-      } catch {
-        // Storage full or error — non-fatal, just skip cache
-      }
-
-      // Create blob URL for instant re-downloads this session
+      } catch { /* storage full, non-fatal */ }
       const url = URL.createObjectURL(blob);
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
       blobUrlRef.current = url;
       setDocxUrl(url);
-
       const a = document.createElement('a');
-      a.href = url;
-      a.download = safeFilename;
-      a.click();
+      a.href = url; a.download = safeFilename; a.click();
     } catch (err) {
       alert('Error al generar el DOCX: ' + err.message);
     } finally {
@@ -156,6 +161,7 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
 
   const wordCount = useMemo(() => transcript.split(/\s+/).filter(Boolean).length, [transcript]);
   const speakers = Object.keys(speakerColorMap);
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <div className="bg-background-light font-display text-slate-900 h-screen flex flex-col overflow-hidden">
@@ -188,29 +194,13 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
+        <aside className="w-56 bg-white border-r border-slate-200 flex-col shrink-0 overflow-y-auto hidden sm:flex">
           <div className="p-5 border-b border-slate-200">
             <div className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mb-2">
               Completado
             </div>
             <h1 className="text-slate-900 text-base font-bold leading-snug truncate">{filename || 'Audiencia Legal'}</h1>
           </div>
-
-          {/* Audio player */}
-          {audioUrl && (
-            <div className="p-4 border-b border-slate-200">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>headphones</span>
-                Reproducir Audio
-              </p>
-              <audio
-                src={audioUrl}
-                controls
-                className="w-full rounded-lg"
-                style={{ height: 36, accentColor: '#1e40af' }}
-              />
-            </div>
-          )}
 
           {speakers.length > 0 && (
             <div className="p-4">
@@ -233,7 +223,6 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
             <p className="text-xs text-slate-400">
               <span className="font-medium text-slate-700">{turns.length}</span> turnos de habla
             </p>
-            {/* Clear cache button */}
             <button
               onClick={onClearCache}
               className="mt-1 flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-500 transition-colors"
@@ -248,7 +237,7 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
         {/* Main transcript area */}
         <main className="flex-1 flex flex-col relative bg-background-light overflow-hidden">
           {/* Toolbar */}
-          <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
+          <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Transcripción Legal</h2>
               <p className="text-xs text-slate-400">Solo lectura</p>
@@ -258,16 +247,16 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar en transcripción..."
-                className="pl-8 pr-4 py-1.5 text-sm rounded-lg border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 focus:outline-none w-64"
+                placeholder="Buscar..."
+                className="pl-8 pr-4 py-1.5 text-sm rounded-lg border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 focus:outline-none w-36 sm:w-64"
               />
             </div>
           </div>
 
           {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto px-8 py-8">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-8 py-6 sm:py-8">
             <div className="max-w-4xl mx-auto bg-white shadow-sm border border-slate-200 rounded-xl min-h-full">
-              <div className="p-10 space-y-7">
+              <div className="p-5 sm:p-10 space-y-7">
                 <div className="text-center mb-10 border-b border-slate-100 pb-8">
                   <p className="font-mono text-sm text-slate-400 mb-2 uppercase tracking-wider">Transcripción de Audiencia Legal</p>
                   <h1 className="font-display text-2xl font-bold text-slate-900 mb-3">{filename || 'Audiencia'}</h1>
@@ -296,51 +285,120 @@ export default function TranscriptPage({ transcript, filename, audioFile, passwo
                 ))}
               </div>
             </div>
-            <div className="h-24" />
+            <div className="h-32" />
           </div>
 
-          {/* Fixed bottom action bar */}
-          <div className="absolute bottom-0 left-0 w-full bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-slate-500">
-                Palabras: <span className="font-semibold text-slate-800">{wordCount.toLocaleString()}</span>
-              </span>
-              <span className="text-sm text-slate-500">
-                Turnos: <span className="font-semibold text-slate-800">{turns.length}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onBack}
-                className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
-              >
-                Volver
-              </button>
-              <button
-                onClick={handleDownloadDocx}
-                disabled={downloading}
-                className="px-5 py-2 rounded-lg bg-primary text-white text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm shadow-blue-200 disabled:opacity-50"
-              >
-                {downloading ? (
-                  <>
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                    </svg>
-                    Generando...
-                  </>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>download</span>
-                    Descargar .DOCX
-                    {docxCached && (
-                      <span className="ml-1 px-1.5 py-0.5 rounded bg-white/20 text-xs font-medium">
-                        guardado
-                      </span>
-                    )}
-                  </>
-                )}
-              </button>
+          {/* Fixed bottom bar */}
+          <div className="absolute bottom-0 left-0 w-full bg-white border-t border-slate-200 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+
+            {/* Audio player — only when audio is available */}
+            {audioUrl && (
+              <div className="px-4 sm:px-6 pt-3 pb-1 flex items-center gap-3">
+                {/* Hidden audio element */}
+                <audio
+                  ref={audioRef}
+                  src={audioUrl}
+                  onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
+                  onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+                  onEnded={() => setPlaying(false)}
+                />
+
+                {/* Play / Pause */}
+                <button
+                  onClick={togglePlay}
+                  className="h-9 w-9 flex items-center justify-center rounded-full bg-primary text-white hover:bg-blue-700 active:scale-95 transition-all shrink-0 shadow-sm shadow-blue-300"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
+                    {playing ? 'pause' : 'play_arrow'}
+                  </span>
+                </button>
+
+                {/* Time */}
+                <span className="text-xs font-mono text-slate-500 shrink-0 tabular-nums">
+                  {formatTime(currentTime)}
+                  <span className="text-slate-300 mx-1">/</span>
+                  {formatTime(duration)}
+                </span>
+
+                {/* Progress bar */}
+                <div className="relative flex-1 h-2 group/bar cursor-pointer" onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const t = ((e.clientX - rect.left) / rect.width) * (duration || 0);
+                  setCurrentTime(t);
+                  if (audioRef.current) audioRef.current.currentTime = t;
+                }}>
+                  {/* Track */}
+                  <div className="absolute inset-y-0 left-0 right-0 rounded-full bg-slate-200 my-auto h-1.5" />
+                  {/* Fill */}
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-primary my-auto h-1.5 transition-none"
+                    style={{ width: `${progress}%` }}
+                  />
+                  {/* Thumb */}
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-3.5 w-3.5 rounded-full bg-primary shadow border-2 border-white opacity-0 group-hover/bar:opacity-100 transition-opacity"
+                    style={{ left: `${progress}%` }}
+                  />
+                  {/* Invisible range for keyboard + fine scrubbing */}
+                  <input
+                    type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+                    onChange={handleSeek}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Actions row */}
+            <div className="px-4 sm:px-6 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3 sm:gap-4">
+                <span className="text-xs sm:text-sm text-slate-500">
+                  <span className="font-semibold text-slate-800">{wordCount.toLocaleString()}</span> palabras
+                </span>
+                <span className="text-xs sm:text-sm text-slate-500 hidden sm:inline">
+                  <span className="font-semibold text-slate-800">{turns.length}</span> turnos
+                </span>
+                <button
+                  onClick={onClearCache}
+                  className="sm:hidden flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>delete</span>
+                  Caché
+                </button>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  onClick={onBack}
+                  className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
+                >
+                  Volver
+                </button>
+                <button
+                  onClick={handleDownloadDocx}
+                  disabled={downloading}
+                  className="px-3 sm:px-5 py-2 rounded-lg bg-primary text-white text-xs sm:text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-blue-200 disabled:opacity-50"
+                >
+                  {downloading ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      <span className="hidden sm:inline">Generando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined" style={{ fontSize: 17 }}>download</span>
+                      <span>.DOCX</span>
+                      {docxCached && (
+                        <span className="hidden sm:inline ml-0.5 px-1.5 py-0.5 rounded bg-white/20 text-xs font-medium">
+                          guardado
+                        </span>
+                      )}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </main>
