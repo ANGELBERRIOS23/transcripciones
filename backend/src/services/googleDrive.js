@@ -37,6 +37,7 @@ export async function uploadAudioToDrive({ audioPath, audioName, mimeType }) {
 
   console.log(`[Drive] Subiendo audio: ${audioName}`);
   const res = await drive.files.create({
+    supportsAllDrives: true,
     requestBody: { name: audioName, parents: [folderId] },
     media: { mimeType, body: fs.createReadStream(audioPath) },
     fields: 'id,name,webViewLink',
@@ -58,6 +59,7 @@ export async function uploadTranscriptToDrive({ transcriptText, audioName }) {
 
   console.log(`[Drive] Subiendo transcripción: ${txtName}`);
   const res = await drive.files.create({
+    supportsAllDrives: true,
     requestBody: { name: txtName, parents: [folderId] },
     media: { mimeType: 'text/plain; charset=utf-8', body: Readable.from([transcriptText]) },
     fields: 'id,name,webViewLink',
