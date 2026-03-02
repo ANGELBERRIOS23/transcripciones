@@ -1,4 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+
+const LS_DOCX_B64 = 'ltp_last_docx_b64';
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const SPEAKER_COLORS = [
   'text-blue-700',
@@ -12,7 +15,7 @@ const SPEAKER_COLORS = [
 function parseTranscript(text) {
   const blocks = text.split(/\n\n+/);
   return blocks
-    .map((block) => block.trim())
+    .map((b) => b.trim())
     .filter(Boolean)
     .map((block) => {
       const colonIdx = block.indexOf(':');
@@ -23,13 +26,102 @@ function parseTranscript(text) {
     });
 }
 
-export default function TranscriptPage({ transcript, filename, password, onBack, onLogout }) {
+/** Convert a base64 string to a Blob URL */
+function b64ToBlob(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: DOCX_MIME });
+}
+
+/** Read a Blob as base64 string (data: prefix stripped) */
+function blobToB64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+export default function TranscriptPage({ transcript, filename, password, onBack, onLogout, onClearCache }) {
   const [search, setSearch] = useState('');
   const [downloading, setDownloading] = useState(false);
+  // Cached DOCX blob URL (in-memory, restored from localStorage on mount)
+  const [docxUrl, setDocxUrl] = useState(null);
+  const [docxCached, setDocxCached] = useState(false);
+  const blobUrlRef = useRef(null); // to revoke on unmount
+
+  // On mount: restore DOCX from localStorage if available
+  useEffect(() => {
+    const b64 = localStorage.getItem(LS_DOCX_B64);
+    if (b64) {
+      try {
+        const blob = b64ToBlob(b64);
+        const url = URL.createObjectURL(blob);
+        blobUrlRef.current = url;
+        setDocxUrl(url);
+        setDocxCached(true);
+      } catch {
+        localStorage.removeItem(LS_DOCX_B64);
+      }
+    }
+    // Cleanup blob URL on unmount
+    return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
+  }, []);
+
+  const handleDownloadDocx = async () => {
+    const safeFilename = `transcripcion_${(filename || 'audiencia').replace(/\.[^.]+$/, '')}.docx`;
+
+    // Use cached DOCX if available
+    if (docxUrl) {
+      const a = document.createElement('a');
+      a.href = docxUrl;
+      a.download = safeFilename;
+      a.click();
+      return;
+    }
+
+    // Generate for the first time
+    setDownloading(true);
+    try {
+      const res = await fetch('/api/download/docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${password}` },
+        body: JSON.stringify({ transcript, title: `Transcripción — ${filename || 'Audiencia Legal'}` }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+
+      const blob = await res.blob();
+
+      // Cache in localStorage as base64
+      try {
+        const b64 = await blobToB64(blob);
+        localStorage.setItem(LS_DOCX_B64, b64);
+        setDocxCached(true);
+      } catch {
+        // Storage full or error — non-fatal, just skip cache
+      }
+
+      // Create blob URL for instant re-downloads this session
+      const url = URL.createObjectURL(blob);
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = url;
+      setDocxUrl(url);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = safeFilename;
+      a.click();
+    } catch (err) {
+      alert('Error al generar el DOCX: ' + err.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const turns = useMemo(() => parseTranscript(transcript), [transcript]);
 
-  // Assign deterministic colors to speakers
   const speakerColorMap = useMemo(() => {
     const map = {};
     let idx = 0;
@@ -46,47 +138,11 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
     if (!search.trim()) return turns;
     const q = search.toLowerCase();
     return turns.filter(
-      (t) =>
-        t.text.toLowerCase().includes(q) || (t.speaker && t.speaker.toLowerCase().includes(q))
+      (t) => t.text.toLowerCase().includes(q) || (t.speaker && t.speaker.toLowerCase().includes(q))
     );
   }, [turns, search]);
 
-  const handleDownloadDocx = async () => {
-    setDownloading(true);
-    try {
-      const res = await fetch('/api/download/docx', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${password}`,
-        },
-        body: JSON.stringify({
-          transcript,
-          title: `Transcripción — ${filename || 'Audiencia Legal'}`,
-        }),
-      });
-
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `transcripcion_${Date.now()}.docx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Error al generar el DOCX: ' + err.message);
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  const wordCount = useMemo(
-    () => transcript.split(/\s+/).filter(Boolean).length,
-    [transcript]
-  );
-
+  const wordCount = useMemo(() => transcript.split(/\s+/).filter(Boolean).length, [transcript]);
   const speakers = Object.keys(speakerColorMap);
 
   return (
@@ -110,6 +166,7 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
           <button
             onClick={onLogout}
             className="flex items-center justify-center p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
+            title="Cerrar sesión"
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>logout</span>
           </button>
@@ -141,13 +198,22 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
             </div>
           )}
 
-          <div className="mt-auto p-4 border-t border-slate-200">
+          <div className="mt-auto p-4 border-t border-slate-200 space-y-2">
             <p className="text-xs text-slate-400">
               <span className="font-medium text-slate-700">{wordCount.toLocaleString()}</span> palabras
             </p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-400">
               <span className="font-medium text-slate-700">{turns.length}</span> turnos de habla
             </p>
+            {/* Clear cache button */}
+            <button
+              onClick={onClearCache}
+              className="mt-1 flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-500 transition-colors"
+              title="Borrar transcripción y DOCX guardados"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+              Borrar caché
+            </button>
           </div>
         </aside>
 
@@ -174,7 +240,6 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
           <div className="flex-1 overflow-y-auto px-8 py-8">
             <div className="max-w-4xl mx-auto bg-white shadow-sm border border-slate-200 rounded-xl min-h-full">
               <div className="p-10 space-y-7">
-                {/* Document header */}
                 <div className="text-center mb-10 border-b border-slate-100 pb-8">
                   <p className="font-mono text-sm text-slate-400 mb-2 uppercase tracking-wider">Transcripción de Audiencia Legal</p>
                   <h1 className="font-display text-2xl font-bold text-slate-900 mb-3">{filename || 'Audiencia'}</h1>
@@ -221,7 +286,7 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
                 onClick={onBack}
                 className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
               >
-                Cancelar
+                Volver
               </button>
               <button
                 onClick={handleDownloadDocx}
@@ -240,6 +305,11 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
                   <>
                     <span className="material-symbols-outlined" style={{ fontSize: 18 }}>download</span>
                     Descargar .DOCX
+                    {docxCached && (
+                      <span className="ml-1 px-1.5 py-0.5 rounded bg-white/20 text-xs font-medium">
+                        guardado
+                      </span>
+                    )}
                   </>
                 )}
               </button>

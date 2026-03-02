@@ -3,9 +3,10 @@ import LoginPage from './pages/LoginPage.jsx';
 import UploadPage from './pages/UploadPage.jsx';
 import TranscriptPage from './pages/TranscriptPage.jsx';
 
-const LS_PASSWORD  = 'ltp_password';
+const LS_PASSWORD   = 'ltp_password';
 const LS_TRANSCRIPT = 'ltp_last_transcript';
 const LS_FILENAME   = 'ltp_last_filename';
+const LS_DOCX_B64   = 'ltp_last_docx_b64';
 
 export default function App() {
   const [password, setPassword] = useState(() => localStorage.getItem(LS_PASSWORD) || '');
@@ -29,7 +30,8 @@ export default function App() {
   const handleTranscript = (text, name) => {
     setTranscript(text);
     setFilename(name);
-    // Persist in localStorage
+    // New transcript → clear old cached DOCX, save new transcript
+    localStorage.removeItem(LS_DOCX_B64);
     localStorage.setItem(LS_TRANSCRIPT, text);
     localStorage.setItem(LS_FILENAME, name);
     setShowRestore(false);
@@ -45,6 +47,8 @@ export default function App() {
   const handleClearCache = () => {
     localStorage.removeItem(LS_TRANSCRIPT);
     localStorage.removeItem(LS_FILENAME);
+    localStorage.removeItem(LS_DOCX_B64);
+    setTranscript(null);
     setShowRestore(false);
   };
 
