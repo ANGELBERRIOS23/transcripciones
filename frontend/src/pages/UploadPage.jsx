@@ -36,21 +36,39 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
     addFiles(e.dataTransfer.files);
   }, []);
 
+  /** Poll a jobId until done or error. Returns the job result. */
+  const pollJob = async (jobId, label) => {
+    const INTERVAL = 4000; // poll every 4 seconds
+    while (true) {
+      await new Promise((r) => setTimeout(r, INTERVAL));
+      const res = await fetch(`/api/transcribe/status/${jobId}`, {
+        headers: { Authorization: `Bearer ${password}` },
+      });
+      if (!res.ok) throw new Error(`Error al consultar estado (${res.status})`);
+      const job = await res.json();
+      if (job.status === 'done') return job;
+      if (job.status === 'error') throw new Error(job.error || 'Error desconocido');
+      // Still processing — show backend message
+      setProgress(`${label}: ${job.message || 'procesando...'}`);
+    }
+  };
+
   const handleTranscribe = async () => {
     if (!files.length) return;
     setUploading(true);
     setError('');
 
-    // Process each file sequentially, combine transcripts
     const parts = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      setProgress(`Subiendo parte ${i + 1}/${files.length}: ${file.name}...`);
-
-      const formData = new FormData();
-      formData.append('audio', file);
+      const label = files.length > 1 ? `Parte ${i + 1}/${files.length}` : file.name;
 
       try {
+        // 1. Upload file — returns immediately with a jobId
+        setProgress(`${label}: subiendo archivo...`);
+        const formData = new FormData();
+        formData.append('audio', file);
+
         const res = await fetch('/api/transcribe', {
           method: 'POST',
           headers: { Authorization: `Bearer ${password}` },
@@ -62,9 +80,13 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
           throw new Error(data.error || `Error ${res.status}`);
         }
 
-        const data = await res.json();
-        parts.push({ name: file.name, text: data.transcript });
-        setProgress(`Parte ${i + 1}/${files.length} completada.`);
+        const { jobId } = await res.json();
+        setProgress(`${label}: procesando con IA (puede tardar varios minutos)...`);
+
+        // 2. Poll until done
+        const job = await pollJob(jobId, label);
+        parts.push({ name: file.name, text: job.transcript });
+        setProgress(`${label}: ✓ completado.`);
       } catch (err) {
         setError(`Error en "${file.name}": ${err.message}`);
         setUploading(false);
@@ -72,13 +94,10 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
       }
     }
 
-    // Build combined transcript
-    let combined = '';
-    if (parts.length === 1) {
-      combined = parts[0].text;
-    } else {
-      combined = parts.map((p, idx) => `## Parte ${idx + 1} — ${p.name}\n\n${p.text}`).join('\n\n---\n\n');
-    }
+    const combined =
+      parts.length === 1
+        ? parts[0].text
+        : parts.map((p, idx) => `## Parte ${idx + 1} — ${p.name}\n\n${p.text}`).join('\n\n---\n\n');
 
     onTranscript(combined, files.length === 1 ? files[0].name : 'Audiencia Legal');
   };
