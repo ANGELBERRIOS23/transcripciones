@@ -2,6 +2,7 @@ node_modules/
 frontend/node_modules/
 backend/node_modules/
 public/
+!frontend/public/
 frontend/dist/
 .env
 *.env

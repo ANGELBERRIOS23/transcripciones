@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="10" fill="#1e3a5f"/>
+  <!-- Gavel head -->
+  <g transform="rotate(-45 24 24)">
+    <rect x="20" y="10" width="10" height="16" rx="3" fill="#c9a84c"/>
+    <rect x="18" y="10" width="14" height="5" rx="2" fill="#e8c56a"/>
+  </g>
+  <!-- Handle -->
+  <rect x="22" y="24" width="4" height="16" rx="2" transform="rotate(-45 24 32)" fill="#c9a84c"/>
+  <!-- Base line -->
+  <rect x="10" y="36" width="28" height="3" rx="1.5" fill="#c9a84c"/>
+</svg>
