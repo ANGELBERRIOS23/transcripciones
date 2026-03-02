@@ -44,13 +44,16 @@ function blobToB64(blob) {
   });
 }
 
-export default function TranscriptPage({ transcript, filename, password, onBack, onLogout, onClearCache }) {
+export default function TranscriptPage({ transcript, filename, audioFile, password, onBack, onLogout, onClearCache }) {
   const [search, setSearch] = useState('');
   const [downloading, setDownloading] = useState(false);
   // Cached DOCX blob URL (in-memory, restored from localStorage on mount)
   const [docxUrl, setDocxUrl] = useState(null);
   const [docxCached, setDocxCached] = useState(false);
   const blobUrlRef = useRef(null); // to revoke on unmount
+  // Audio player
+  const [audioUrl, setAudioUrl] = useState(null);
+  const audioUrlRef = useRef(null);
 
   // On mount: restore DOCX from localStorage if available
   useEffect(() => {
@@ -69,6 +72,15 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
     // Cleanup blob URL on unmount
     return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
   }, []);
+
+  // Create object URL for the audio file
+  useEffect(() => {
+    if (!audioFile) return;
+    const url = URL.createObjectURL(audioFile);
+    audioUrlRef.current = url;
+    setAudioUrl(url);
+    return () => { URL.revokeObjectURL(url); audioUrlRef.current = null; };
+  }, [audioFile]);
 
   const handleDownloadDocx = async () => {
     const safeFilename = `transcripcion_${(filename || 'audiencia').replace(/\.[^.]+$/, '')}.docx`;
@@ -183,6 +195,22 @@ export default function TranscriptPage({ transcript, filename, password, onBack,
             </div>
             <h1 className="text-slate-900 text-base font-bold leading-snug truncate">{filename || 'Audiencia Legal'}</h1>
           </div>
+
+          {/* Audio player */}
+          {audioUrl && (
+            <div className="p-4 border-b border-slate-200">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>headphones</span>
+                Reproducir Audio
+              </p>
+              <audio
+                src={audioUrl}
+                controls
+                className="w-full rounded-lg"
+                style={{ height: 36, accentColor: '#1e40af' }}
+              />
+            </div>
+          )}
 
           {speakers.length > 0 && (
             <div className="p-4">

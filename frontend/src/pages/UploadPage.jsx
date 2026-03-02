@@ -99,7 +99,7 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
         ? parts[0].text
         : parts.map((p, idx) => `## Parte ${idx + 1} — ${p.name}\n\n${p.text}`).join('\n\n---\n\n');
 
-    onTranscript(combined, files.length === 1 ? files[0].name : 'Audiencia Legal');
+    onTranscript(combined, files.length === 1 ? files[0].name : 'Audiencia Legal', files.length === 1 ? files[0] : null);
   };
 
   return (

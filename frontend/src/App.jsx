@@ -12,6 +12,7 @@ export default function App() {
   const [password, setPassword] = useState(() => localStorage.getItem(LS_PASSWORD) || '');
   const [transcript, setTranscript] = useState(null);
   const [filename, setFilename] = useState('');
+  const [audioFile, setAudioFile] = useState(null);
   const [showRestore, setShowRestore] = useState(false);
 
   // On mount: check if there's a cached transcript from the last session
@@ -27,9 +28,10 @@ export default function App() {
     if (localStorage.getItem(LS_TRANSCRIPT)) setShowRestore(true);
   };
 
-  const handleTranscript = (text, name) => {
+  const handleTranscript = (text, name, file = null) => {
     setTranscript(text);
     setFilename(name);
+    setAudioFile(file);
     // New transcript → clear old cached DOCX, save new transcript
     localStorage.removeItem(LS_DOCX_B64);
     localStorage.setItem(LS_TRANSCRIPT, text);
@@ -41,6 +43,7 @@ export default function App() {
     const saved = localStorage.getItem(LS_TRANSCRIPT);
     const name  = localStorage.getItem(LS_FILENAME) || 'Audiencia guardada';
     if (saved) { setTranscript(saved); setFilename(name); }
+    setAudioFile(null); // restored from cache — no audio file available
     setShowRestore(false);
   };
 
@@ -49,11 +52,13 @@ export default function App() {
     localStorage.removeItem(LS_FILENAME);
     localStorage.removeItem(LS_DOCX_B64);
     setTranscript(null);
+    setAudioFile(null);
     setShowRestore(false);
   };
 
   const handleBack = () => {
     setTranscript(null);
+    setAudioFile(null);
     // Keep cache so user can restore
     const saved = localStorage.getItem(LS_TRANSCRIPT);
     if (saved) setShowRestore(true);
@@ -62,6 +67,7 @@ export default function App() {
   const handleLogout = () => {
     setPassword('');
     setTranscript(null);
+    setAudioFile(null);
     setShowRestore(false);
     localStorage.removeItem(LS_PASSWORD);
   };
@@ -75,6 +81,7 @@ export default function App() {
       <TranscriptPage
         transcript={transcript}
         filename={filename}
+        audioFile={audioFile}
         password={password}
         onBack={handleBack}
         onLogout={handleLogout}

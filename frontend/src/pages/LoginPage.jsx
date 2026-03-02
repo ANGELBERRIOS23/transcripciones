@@ -59,7 +59,7 @@ export default function LoginPage({ onLogin }) {
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Acceso Requerido</h1>
               <p className="mt-2 text-sm text-slate-500">
-                Ingresa la clave de acceso de tu organización para continuar.
+                Ingresa la clave de acceso para continuar.
               </p>
             </div>
 
