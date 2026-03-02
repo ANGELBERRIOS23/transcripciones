@@ -48,8 +48,8 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
       const job = await res.json();
       if (job.status === 'done') return job;
       if (job.status === 'error') throw new Error(job.error || 'Error desconocido');
-      // Still processing — show backend message
-      setProgress(`${label}: ${job.message || 'procesando...'}`);
+      // Still processing — show short backend message
+      if (job.message) setProgress(files.length > 1 ? `${label}: ${job.message}` : job.message);
     }
   };
 
@@ -81,12 +81,12 @@ export default function UploadPage({ password, onTranscript, onLogout, showResto
         }
 
         const { jobId } = await res.json();
-        setProgress(`${label}: procesando con IA (puede tardar varios minutos)...`);
+        setProgress(files.length > 1 ? `${label}: transcribiendo...` : 'Transcribiendo...');
 
         // 2. Poll until done
         const job = await pollJob(jobId, label);
         parts.push({ name: file.name, text: job.transcript });
-        setProgress(`${label}: ✓ completado.`);
+        setProgress(files.length > 1 ? `${label}: listo.` : 'Listo.');
       } catch (err) {
         setError(`Error en "${file.name}": ${err.message}`);
         setUploading(false);

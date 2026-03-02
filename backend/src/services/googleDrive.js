@@ -2,24 +2,26 @@ import { google } from 'googleapis';
 import { Readable } from 'stream';
 import fs from 'fs';
 
-/**
- * Returns true if Google Drive is configured via env vars.
- */
 export function driveEnabled() {
   return !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_DRIVE_FOLDER_ID);
 }
 
 /**
- * Uploads the audio file and its transcript to Google Drive.
- * @param {object} opts
- * @param {string} opts.audioPath     - Local path to the audio temp file
- * @param {string} opts.audioName     - Original filename (e.g. audiencia.mp3)
- * @param {string} opts.transcriptText - Plain text transcript
- * @param {string} opts.mimeType      - MIME type of the audio
- * @returns {Promise<{audio: object, transcript: object}>}
+ * Parse the service account JSON and fix the private_key if it got mangled
+ * by the env var system (literal newlines instead of \n escape sequences).
  */
+function parseCredentials(raw) {
+  const creds = JSON.parse(raw);
+  // EasyPanel / Docker sometimes turns \n inside strings into real newlines,
+  // breaking the PEM key. Normalize it back.
+  if (creds.private_key && !creds.private_key.includes('\n')) {
+    creds.private_key = creds.private_key.replace(/\\n/g, '\n');
+  }
+  return creds;
+}
+
 export async function uploadToDrive({ audioPath, audioName, transcriptText, mimeType }) {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  const credentials = parseCredentials(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
   const auth = new google.auth.GoogleAuth({

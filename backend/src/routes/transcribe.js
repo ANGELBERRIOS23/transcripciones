@@ -71,14 +71,12 @@ async function processJob(jobId, file, mimeType) {
   const update = (fields) => jobs.set(jobId, { ...jobs.get(jobId), ...fields });
 
   try {
-    update({ message: 'Procesando audio con Gemini (puede tardar varios minutos)...' });
+    update({ message: 'Transcribiendo...' });
     const transcript = await transcribeAudio(file.path, mimeType);
-
-    update({ message: 'Transcripción lista.' });
 
     let drive = null;
     if (driveEnabled()) {
-      update({ message: 'Subiendo archivos a Google Drive...' });
+      update({ message: 'Guardando en Drive...' });
       try {
         drive = await uploadToDrive({
           audioPath: file.path,
@@ -92,7 +90,7 @@ async function processJob(jobId, file, mimeType) {
       }
     }
 
-    update({ status: 'done', transcript, filename: file.originalname, drive, message: 'Completado.' });
+    update({ status: 'done', transcript, filename: file.originalname, drive, message: 'Listo.' });
   } catch (err) {
     console.error(`[Job ${jobId}] Error:`, err.message);
     update({ status: 'error', error: err.message || 'Error al transcribir el audio.' });
